@@ -646,10 +646,22 @@ button,a{touch-action:manipulation}
 document.addEventListener("DOMContentLoaded",()=>{
 const API_URL="/api/reso";
 async function api(action,payload={}){
-  const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...payload})});
-  const d=await r.json();
-  if(!r.ok||d.ok===false) throw new Error(d.error||"Gagal terhubung ke server");
-  return d.data!==undefined?d.data:d;
+  const r=await fetch(API_URL,{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({action,...payload})
+  });
+  const text=await r.text();
+  let d;
+  try{ d=JSON.parse(text); }catch(e){ throw new Error("Server mengirim response yang bukan JSON."); }
+  if(!r.ok) throw new Error(d?.error||d?.data?.error||("HTTP "+r.status));
+  if(d?.ok===false) throw new Error(d.error||"Gagal terhubung ke server");
+
+  // Normal: {ok:true,data:{times:[...]}}
+  // Toleransi jika Vercel/GAS membungkus response lebih dari sekali.
+  let result=d?.data!==undefined?d.data:d;
+  if(result?.ok!==undefined && result?.data!==undefined) result=result.data;
+  return result;
 }
 const modal=document.getElementById("bookingModal"),close=document.getElementById("modalClose"),booking=document.getElementById("bookingButton");
 const steps=[...document.querySelectorAll(".booking-step")],stepNo=document.getElementById("bookingStepNumber"),progress=document.getElementById("bookingProgress");
@@ -663,12 +675,27 @@ document.querySelectorAll(".barber-option").forEach(b=>b.onclick=()=>{state.barb
 const dp=document.getElementById("datePicker"),tg=document.getElementById("timeGrid"),ml=document.getElementById("bookingMonth"),now=new Date();now.setHours(0,0,0,0);
 const dates=[...Array(21)].map((_,i)=>{let d=new Date(now);d.setDate(now.getDate()+i);return d}),mn=["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"],dn=["Min","Sen","Sel","Rab","Kam","Jum","Sab"],lk=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 function rd(){ml.textContent=(state.date?new Date(state.date+"T00:00:00"):dates[0]).toLocaleString("id-ID",{month:"long",year:"numeric"}).toUpperCase();dp.innerHTML=dates.map((d,i)=>`<button class="date-option ${state.date===lk(d)?"active":""}" data-date="${lk(d)}"><span class="day">${i?"": "Hari ini"}</span><strong>${d.getDate()}</strong><small>${mn[d.getMonth()].slice(0,3)}</small></button>`).join("");dp.querySelectorAll("button").forEach(b=>b.onclick=()=>{state.date=b.dataset.date;state.time=null;rd();loadTimes()})}
-function rt(data){tg.innerHTML=(data||[]).map(x=>`<button class="time-option ${state.time===x.time?"active":""} ${x.available===false?"booked":""}" ${x.available===false?"disabled":""} data-time="${x.time}">${x.time.replace(":","." )}</button>`).join("");tg.querySelectorAll(".time-option:not(.booked)").forEach(b=>b.onclick=()=>{state.time=b.dataset.time;rt(data)})}
+function rt(data){
+  const list=Array.isArray(data)?data:[];
+  tg.innerHTML=list.map(x=>`<button class="time-option ${state.time===x.time?"active":""} ${x.available===false?"booked":""}" ${x.available===false?"disabled":""} data-time="${x.time}">${String(x.time||"").replace(":","." )}</button>`).join("");
+  tg.querySelectorAll(".time-option:not(.booked)").forEach(b=>b.onclick=()=>{state.time=b.dataset.time;rt(list)});
+}
 async function loadTimes(){
- if(!state.date||!state.barber){rt([]);return}
- tg.innerHTML='<div style="grid-column:1/-1;padding:18px;text-align:center;font:9px var(--mono);color:var(--muted)">MEMUAT JAM...</div>';
- try{const r=await api("getClientBookingData",{date:state.date,barber:state.barber});rt(r.times||[])}
- catch(e){console.error(e);tg.innerHTML='<div style="grid-column:1/-1;padding:18px;text-align:center;font:9px var(--mono);color:#a00">GAGAL MEMUAT JAM</div>'}
+  if(!state.date||!state.barber){
+    tg.innerHTML='<div style="grid-column:1/-1;padding:18px;text-align:center;font:9px var(--mono);color:var(--muted)">PILIH CAPSTER DAN TANGGAL</div>';
+    return;
+  }
+  state.time=null;
+  tg.innerHTML='<div style="grid-column:1/-1;padding:18px;text-align:center;font:9px var(--mono);color:var(--muted)">MEMUAT JAM...</div>';
+  try{
+    const r=await api("getClientBookingData",{date:state.date,barber:state.barber});
+    const times=Array.isArray(r)?r:(Array.isArray(r?.times)?r.times:[]);
+    if(!times.length) throw new Error("Server tidak mengembalikan daftar jam.");
+    rt(times);
+  }catch(e){
+    console.error("RESO loadTimes:",e);
+    tg.innerHTML='<div style="grid-column:1/-1;padding:18px;text-align:center;font:9px var(--mono);color:#a00">GAGAL MEMUAT JAM<br><small style="display:block;margin-top:6px;color:#777">'+(e.message||"Periksa koneksi API")+'</small></div>';
+  }
 }
 state.date=lk(dates[0]);
 rd();
