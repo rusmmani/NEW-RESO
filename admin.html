@@ -92,7 +92,7 @@
     <div class="cal-head"><button class="btn" id="prevMonth">←</button><strong id="calTitle"></strong><button class="btn" id="nextMonth">→</button></div>
     <div class="date-grid" id="dateGrid"></div>
     <div class="cal-head"><strong>Atur jam booking</strong><small style="font:8px var(--mono);color:var(--muted)">DRAG BOOKING KE JAM LAIN</small></div>
-    <div class="drag-instruction">Klik/tahan blok booking, lalu geser vertikal ke slot jam yang diinginkan. Posisi blok akan berubah, lalu klik Simpan Reschedule untuk memperbarui jadwal.</div>
+    <div class="drag-instruction">Klik/tahan blok booking, lalu geser vertikal ke slot jam yang diinginkan. Jadwal akan langsung diperbarui.</div>
     <div class="schedule-wrap" id="timeGrid"></div>
     <div class="modal-footer"><button class="btn" id="cancelModal">Batal</button><button class="btn dark" id="saveReschedule">Simpan Reschedule <span>→</span></button></div>
   </div>
@@ -100,7 +100,9 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const API_URL="/api/reso"; async function api(action,payload={}){const res=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=UTF-8"},body:JSON.stringify({action,...payload})});const data=await res.json();if(data&&data.ok===false)throw new Error(data.error||"Permintaan gagal");return data;} const list=document.getElementById("bookingList"),search=document.getElementById("search"),status=document.getElementById("statusFilter"),barber=document.getElementById("barberFilter"),mn=["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"],dn=["Min","Sen","Sel","Rab","Kam","Jum","Sab"],today=new Date();
+const API_URL="/api/reso";
+async function api(action,payload={}){const res=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=UTF-8"},body:JSON.stringify({action,...payload})});const data=await res.json();if(data&&data.ok===false)throw new Error(data.error||"Permintaan gagal");return data;}
+const G=null, list=document.getElementById("bookingList"),search=document.getElementById("search"),status=document.getElementById("statusFilter"),barber=document.getElementById("barberFilter"),mn=["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"],dn=["Min","Sen","Sel","Rab","Kam","Jum","Sab"],today=new Date();
 today.setHours(0,0,0,0);let bookings=[],current=null,selDate=null,selTime=null,view=new Date(today.getFullYear(),today.getMonth(),1);
 const k=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`,dt=s=>{let d=new Date(s+"T00:00:00");return`${dn[d.getDay()]}, ${d.getDate()} ${mn[d.getMonth()]} ${d.getFullYear()}`},esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
 async function load(){try{bookings=await api("getBookings")||[];render()}catch(e){toast(e.message||"Gagal memuat booking")}}
@@ -110,67 +112,87 @@ function sum(){document.getElementById("resSummary").innerHTML=`<strong>${esc(cu
 function cal(){let f=new Date(view.getFullYear(),view.getMonth(),1),l=new Date(view.getFullYear(),view.getMonth()+1,0),c=[];for(let i=0;i<f.getDay();i++)c.push('<button class="date-cell muted" disabled></button>');for(let i=1;i<=l.getDate();i++){let d=new Date(view.getFullYear(),view.getMonth(),i),x=k(d);c.push(`<button class="date-cell ${x===selDate?"selected":""}" onclick="pickDate('${x}')"><strong>${i}</strong><small>${dn[d.getDay()]}</small></button>`)}document.getElementById("calTitle").textContent=mn[view.getMonth()]+" "+view.getFullYear();document.getElementById("dateGrid").innerHTML=dn.map(x=>`<div class="dayhead">${x}</div>`).join("")+c.join("")}
 function pickDate(x){selDate=x;selTime=null;cal();times()}
 async function times(){
-  const box=document.getElementById("scheduleGrid"); if(!selDate||!current||!box)return;
-  box.innerHTML="<div class=\"schedule-loading\">Memuat slot...</div>";
-  try{const r=await api("getClientBookingData",{date:selDate,barber:current.barber}); const map={}; (r.bookings||[]).forEach(b=>map[b.time]=b); let html="";
-    for(let h=10;h<=22;h++){const t=String(h).padStart(2,"0")+":00",b=map[t]; html+=`<div class="schedule-slot ${b?"has-booking":""}" data-time="${t}" onclick="pickTime('${t}')"><span>${t.replace(":",".")}</span>${b?`<div class="booking-block ${b.id===current.id?"current":""}"><strong>${esc(b.name)}</strong><small>${esc(b.service)}</small></div>`:""}</div>`;}
-    box.innerHTML=html; bindDragDrop();
-  }catch(e){box.innerHTML="<div class=\"schedule-loading\">Gagal memuat slot.</div>";toast(e.message||"Gagal cek slot");}
+  if(!current||!selDate)return;
+  const box=document.getElementById("timeGrid");
+  box.innerHTML='<div class="slot-empty" style="padding:20px;text-align:center">MEMUAT JAM...</div>';
+  try{
+    const all=await api("getBookings");
+    const dayBookings=(all||[]).filter(b=>b.date===selDate&&b.barber===current.barber&&b.status!=="Cancelled");
+    const byTime={};
+    dayBookings.forEach(b=>{byTime[b.time]=b});
+    let html="";
+    for(let h=10;h<22;h++){
+      for(const m of [0,30]){
+        const t=String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
+        const b=byTime[t];
+        const isCurrent=b&&b.id===current.id;
+        html+=`<div class="schedule-row">
+          <div class="schedule-time">${t}</div>
+          <div class="schedule-slot ${b?"booked-slot":"empty-slot"}" data-time="${t}">
+            ${b
+              ? `<button class="booking-block ${isCurrent?"current":""}" draggable="${isCurrent}" data-time="${t}" ${isCurrent?`onclick="pickTime('${t}')"`:""}><strong>${esc(b.name)}</strong><small>${esc(b.service)} · ${esc(b.barber)}</small><span>${isCurrent&&selTime===t?"✓":"●"}</span></button>`
+              : `<div class="slot-empty">KOSONG</div>`}
+          </div>
+        </div>`;
+      }
+    }
+    box.innerHTML=html;
+    bindDragDrop();
+    sum();
+  }catch(e){
+    console.error(e);
+    box.innerHTML='<div class="slot-empty" style="padding:20px;text-align:center">GAGAL MEMUAT JAM</div>';
+    toast(e.message||"Gagal memuat jadwal");
+  }
 }
 
 function bindDragDrop(){
-  const blocks=document.querySelectorAll(".booking-block[draggable='true']");
+  const block=document.querySelector(".booking-block.current");
   const slots=document.querySelectorAll(".schedule-slot");
-
-  blocks.forEach(block=>{
+  if(block){
     block.addEventListener("dragstart",e=>{
-      e.dataTransfer.effectAllowed="move";
-      e.dataTransfer.setData("text/plain",block.dataset.id);
+      e.dataTransfer.setData("text/plain",block.dataset.time);
       block.classList.add("dragging");
     });
     block.addEventListener("dragend",()=>block.classList.remove("dragging"));
-  });
-
+  }
   slots.forEach(slot=>{
-    slot.addEventListener("dragover",e=>{
-      if(slot.querySelector(".booking-block")) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect="move";
-      slot.classList.add("drag-over");
-    });
+    slot.addEventListener("dragover",e=>{e.preventDefault();slot.classList.add("drag-over")});
     slot.addEventListener("dragleave",()=>slot.classList.remove("drag-over"));
     slot.addEventListener("drop",e=>{
-      e.preventDefault();
-      slot.classList.remove("drag-over");
-
-      const id=e.dataTransfer.getData("text/plain");
+      e.preventDefault();slot.classList.remove("drag-over");
       const target=slot.dataset.time;
-      if(!id||!target||slot.querySelector(".booking-block")) return;
-
-      const moved=bookings.find(b=>String(b.id)===String(id));
-      if(!moved) return;
-
-      selTime=target;
-      times();
-      sum();
+      if(!target)return;
+      const occupied=slot.classList.contains("booked-slot") && target!==current.time;
+      if(occupied)return toast("Jam tersebut sudah ada booking.");
+      pickTime(target);
     });
   });
 }
-
-function pickTime(t){
-  const b=document.querySelector(`.schedule-slot[data-time="${t}"] .booking-block`);
-  if(b && String(b.dataset.id)!==String(current.id)) {
-    return toast("Jam tersebut sudah dibooking.");
-  }
-  selTime=t;
-  times();
-  sum();
-}
+function pickTime(t){selTime=t;times()}
 document.getElementById("prevMonth").onclick=()=>{view.setMonth(view.getMonth()-1);cal()};document.getElementById("nextMonth").onclick=()=>{view.setMonth(view.getMonth()+1);cal()};document.getElementById("closeModal").onclick=()=>document.getElementById("resModal").classList.remove("show");document.getElementById("cancelModal").onclick=()=>document.getElementById("resModal").classList.remove("show");
-document.getElementById("saveReschedule").onclick=async()=>{if(!selDate||!selTime)return toast("Pilih tanggal dan jam dulu.");try{await api("updateBooking",{id:current.id,date:selDate,time:selTime,status:"Rescheduled",note:"Jadwal dipindahkan melalui dashboard"});toast("Reschedule berhasil");document.getElementById("resModal").classList.remove("show");load()}catch(e){toast(e.message)}};
-async function cancel(id){let b=bookings.find(x=>x.id===id);if(b.status==="Completed")return toast("Booking selesai tidak bisa dibatalkan.");try{if(b.status==="Cancelled"){await api("reactivateBooking",{id});load();return}if(confirm("Batalkan booking "+b.name+"?")){await api("cancelBooking",{id,reason:"Dibatalkan melalui dashboard"});toast("Booking dibatalkan");load()}}catch(e){toast(e.message)}}
-async function done(id){if(confirm("Tandai selesai & sudah bayar?"))try{await api("completeBookingServer",{id});toast("Booking selesai");load()}catch(e){toast(e.message)}}
-search.oninput=render;status.onchange=render;barber.onchange=render;document.getElementById("quickReschedule").onclick=()=>{let b=bookings.find(x=>!["Cancelled","Completed"].includes(x.status));if(b)openRes(b.id)};document.getElementById("quickToday").onclick=()=>{search.value="";status.value="all";barber.value="all";render();window.scrollTo({top:0,behavior:"smooth"});};document.getElementById("quickAll").onclick=()=>{search.value="";status.value="all";barber.value="all";load()};document.getElementById("newBooking").onclick=()=>location.href="?page=booking";document.getElementById("resetDemo").style.display="none";
+document.getElementById("saveReschedule").onclick=async()=>{
+  if(!selDate||!selTime)return toast("Pilih tanggal dan jam dulu.");
+  try{
+    await api("updateBooking",{id:current.id,date:selDate,time:selTime,status:"Rescheduled",note:"Jadwal dipindahkan melalui dashboard"});
+    toast("Reschedule berhasil");
+    document.getElementById("resModal").classList.remove("show");
+    await load();
+  }catch(e){toast(e.message||"Reschedule gagal")}
+};
+async function cancel(id){
+  let b=bookings.find(x=>x.id===id);
+  if(!b)return;
+  if(b.status==="Completed")return toast("Booking selesai tidak bisa dibatalkan.");
+  try{
+    if(b.status==="Cancelled"){await api("reactivateBooking",{id});await load();return}
+    if(confirm("Batalkan booking "+b.name+"?")){await api("cancelBooking",{id,reason:"Dibatalkan melalui dashboard"});toast("Booking dibatalkan");await load()}
+  }catch(e){toast(e.message||"Gagal mengubah status")}
+}
+async function done(id){
+  if(confirm("Tandai selesai & sudah bayar?"))try{await api("completeBookingServer",{id});toast("Booking selesai");await load()}catch(e){toast(e.message||"Gagal")}
+}).completeBookingServer(id)}
+search.oninput=load;status.onchange=load;barber.onchange=load;document.getElementById("quickReschedule").onclick=()=>{let b=bookings.find(x=>!["Cancelled","Completed"].includes(x.status));if(b)openRes(b.id)};document.getElementById("quickAll").onclick=()=>{search.value="";status.value="all";barber.value="all";load()};document.getElementById("newBooking").onclick=()=>location.href="?page=booking";document.getElementById("resetDemo").style.display="none";
 function toast(x){let t=document.getElementById("toast");t.textContent=x;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2200)}load();
 </script>
 </body>
