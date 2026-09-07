@@ -111,40 +111,7 @@ function openRes(id){current=bookings.find(b=>b.id===id);if(!current)return;selD
 function sum(){document.getElementById("resSummary").innerHTML=`<strong>${esc(current.name)} · ${esc(current.service)}</strong><small>${dt(current.date)} · ${current.time} · ${esc(current.barber)}</small>`}
 function cal(){let f=new Date(view.getFullYear(),view.getMonth(),1),l=new Date(view.getFullYear(),view.getMonth()+1,0),c=[];for(let i=0;i<f.getDay();i++)c.push('<button class="date-cell muted" disabled></button>');for(let i=1;i<=l.getDate();i++){let d=new Date(view.getFullYear(),view.getMonth(),i),x=k(d);c.push(`<button class="date-cell ${x===selDate?"selected":""}" onclick="pickDate('${x}')"><strong>${i}</strong><small>${dn[d.getDay()]}</small></button>`)}document.getElementById("calTitle").textContent=mn[view.getMonth()]+" "+view.getFullYear();document.getElementById("dateGrid").innerHTML=dn.map(x=>`<div class="dayhead">${x}</div>`).join("")+c.join("")}
 function pickDate(x){selDate=x;selTime=null;cal();times()}
-async function times(){
-  if(!current||!selDate)return;
-  const box=document.getElementById("timeGrid");
-  box.innerHTML='<div class="slot-empty" style="padding:20px;text-align:center">MEMUAT JAM...</div>';
-  try{
-    const all=await api("getBookings");
-    const dayBookings=(all||[]).filter(b=>b.date===selDate&&b.barber===current.barber&&b.status!=="Cancelled");
-    const byTime={};
-    dayBookings.forEach(b=>{byTime[b.time]=b});
-    let html="";
-    for(let h=10;h<22;h++){
-      for(const m of [0,30]){
-        const t=String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
-        const b=byTime[t];
-        const isCurrent=b&&b.id===current.id;
-        html+=`<div class="schedule-row">
-          <div class="schedule-time">${t}</div>
-          <div class="schedule-slot ${b?"booked-slot":"empty-slot"}" data-time="${t}">
-            ${b
-              ? `<button class="booking-block ${isCurrent?"current":""}" draggable="${isCurrent}" data-time="${t}" ${isCurrent?`onclick="pickTime('${t}')"`:""}><strong>${esc(b.name)}</strong><small>${esc(b.service)} · ${esc(b.barber)}</small><span>${isCurrent&&selTime===t?"✓":"●"}</span></button>`
-              : `<div class="slot-empty">KOSONG</div>`}
-          </div>
-        </div>`;
-      }
-    }
-    box.innerHTML=html;
-    bindDragDrop();
-    sum();
-  }catch(e){
-    console.error(e);
-    box.innerHTML='<div class="slot-empty" style="padding:20px;text-align:center">GAGAL MEMUAT JAM</div>';
-    toast(e.message||"Gagal memuat jadwal");
-  }
-}
+async async function times(){if(!current||!selDate)return;const box=document.getElementById("timeGrid");box.innerHTML="<div class=\"empty\">Memuat jam...</div>";try{const all=await api("getBookings");const day=(all||[]).filter(b=>b.date===selDate&&b.barber===current.barber&&b.status!=="Cancelled");const by={};day.forEach(b=>by[b.time]=b);let h="";for(let x=10;x<22;x++){for(const m of [0,30]){const t=String(x).padStart(2,"0")+":"+String(m).padStart(2,"0"),b=by[t];h+=`<div class="schedule-row"><div class="schedule-time">${t}</div><div class="schedule-slot ${b?"booked-slot":"empty-slot"}" data-time="${t}">${b?`<button class="booking-block ${b.id===current.id?"current":""}" draggable="${b.id===current.id}" data-time="${t}"><strong>${esc(b.name)}</strong><small>${esc(b.service)}</small></button>`:"<div class=\"slot-empty\">KOSONG</div>"}</div></div>`}}box.innerHTML=h;bindDragDrop();}catch(e){box.innerHTML="<div class=\"empty\">Gagal memuat jam</div>";toast(e.message||"Gagal memuat jadwal")}}
 
 function bindDragDrop(){
   const block=document.querySelector(".booking-block.current");
@@ -191,8 +158,7 @@ async function cancel(id){
 }
 async function done(id){
   if(confirm("Tandai selesai & sudah bayar?"))try{await api("completeBookingServer",{id});toast("Booking selesai");await load()}catch(e){toast(e.message||"Gagal")}
-}
-
+}).completeBookingServer(id)}
 search.oninput=load;status.onchange=load;barber.onchange=load;document.getElementById("quickReschedule").onclick=()=>{let b=bookings.find(x=>!["Cancelled","Completed"].includes(x.status));if(b)openRes(b.id)};document.getElementById("quickAll").onclick=()=>{search.value="";status.value="all";barber.value="all";load()};document.getElementById("newBooking").onclick=()=>location.href="?page=booking";document.getElementById("resetDemo").style.display="none";
 function toast(x){let t=document.getElementById("toast");t.textContent=x;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2200)}load();
 </script>
