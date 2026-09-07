@@ -1,3 +1,4 @@
+const SPREADSHEET_ID = '11m-xtfldUCVuJQsB9-FUCGMK8V4d5QpekZPOndANWOQ';
 const SHEET_NAME = 'Bookings';
 const TZ = 'Asia/Jakarta';
 const BOOKING_HOUR_START = 10;
@@ -6,46 +7,67 @@ const SLOT_MINUTES = 30;
 const DEFAULT_BARBERS = ['Rezky', 'Iqbal'];
 
 function doGet(e) {
-  const p = (e && e.parameter) || {};
-  if (p.api === '1' || p.action) return apiResponse_(handleApi_(p.action || '', p));
-
-  const page = p.page || 'booking';
-  const file = page === 'admin' ? 'Admin' : 'Index';
-  return HtmlService.createHtmlOutputFromFile(file)
-    .setTitle(page === 'admin' ? 'RESO Haircut — Dashboard' : 'RESO Haircut — Booking Online')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  const params = (e && e.parameter) || {};
+  try {
+    const api = String(params.api || '').trim();
+    if (api === 'getBookings') {
+      return jsonOutput_({ok:true, data:getBookings()});
+    }
+    if (api === 'getClientBookingData') {
+      return jsonOutput_({ok:true, data:getClientBookingData(String(params.date || ''), String(params.barber || ''))});
+    }
+    return jsonOutput_({ok:true, message:'RESO Haircut API aktif'});
+  } catch (err) {
+    return jsonOutput_({ok:false, error:err.message || String(err)});
+  }
 }
 
 function doPost(e) {
   try {
     const raw = e && e.postData && e.postData.contents ? e.postData.contents : '{}';
     const p = JSON.parse(raw);
-    return apiResponse_(handleApi_(p.action || '', p));
+    const action = String(p.action || '').trim();
+    let result;
+
+    switch (action) {
+      case 'getBookings':
+        result = getBookings();
+        break;
+      case 'getClientBookingData':
+        result = getClientBookingData(String(p.date || ''), String(p.barber || ''));
+        break;
+      case 'createBooking':
+        result = createBooking(p);
+        break;
+      case 'updateBooking':
+        result = updateBooking(p);
+        break;
+      case 'cancelBooking':
+        result = cancelBooking(p.id, p.reason);
+        break;
+      case 'reactivateBooking':
+        result = reactivateBooking(p.id);
+        break;
+      case 'completeBookingServer':
+        result = completeBookingServer(p.id);
+        break;
+      default:
+        throw new Error('Action tidak dikenali: ' + action);
+    }
+
+    return jsonOutput_({ok:true, data:result});
   } catch (err) {
-    return apiResponse_({ok:false, error: err.message || String(err)});
+    return jsonOutput_({ok:false, error:err.message || String(err)});
   }
 }
 
-function apiResponse_(data) {
-  return ContentService.createTextOutput(JSON.stringify(data))
+function jsonOutput_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-function handleApi_(action, p) {
-  switch (String(action || '')) {
-    case 'getBookings': return getBookings();
-    case 'getClientBookingData': return getClientBookingData(String(p.date || ''), String(p.barber || ''));
-    case 'createBooking': return createBooking(p);
-    case 'updateBooking': return updateBooking(p);
-    case 'cancelBooking': return cancelBooking(String(p.id || ''), String(p.reason || 'Dibatalkan'));
-    case 'reactivateBooking': return reactivateBooking(String(p.id || ''));
-    case 'completeBookingServer': return completeBookingServer(String(p.id || ''));
-    default: throw new Error('Action API tidak dikenal: ' + action);
-  }
-}
-
 function getSheet_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   let sh = ss.getSheetByName(SHEET_NAME);
   if (!sh) sh = ss.insertSheet(SHEET_NAME);
   const headers = [
@@ -118,85 +140,39 @@ function getBookings() {
   const sh = getSheet_();
   const last = sh.getLastRow();
   if (last < 2) return [];
-
-  const rows = sh.getRange(2, 1, last - 1, 15).getValues();
-
-  return rows
-    .filter(r => String(r[0] || '').trim() !== '')
-    .map(rowToObject_)
-    .filter(Boolean);
+  const rows = sh.getRange(2,1,last-1,15).getValues();
+  return rows.filter(r => r[0]).map(rowToObject_);
 }
 
 function getClientBookingData(date, barber) {
-  const bookings = [];
   const booked = {};
-
   const sh = getSheet_();
   const last = sh.getLastRow();
-
   if (last >= 2) {
-    const rows = sh.getRange(2, 1, last - 1, 15).getValues();
-
+    const rows = sh.getRange(2,1,last-1,15).getValues();
     rows.forEach(r => {
-      const id = String(r[0] || '');
-      const name = String(r[2] || '');
-      const service = String(r[8] || '');
-      const bookingBarber = String(r[11] || '');
-      const bookingDate = normalizeDate_(r[12]);
-      const bookingTime = String(r[13] || '');
-      const status = String(r[14] || '');
-
-      if (
-        bookingDate === String(date || '') &&
-        bookingBarber === String(barber || '') &&
-        bookingTime &&
-        !['Cancelled', 'Completed'].includes(status)
-      ) {
-        booked[bookingTime] = true;
-        bookings.push({
-          id,
-          name,
-          service,
-          barber: bookingBarber,
-          date: bookingDate,
-          time: bookingTime,
-          status
-        });
+      const d = normalizeDate_(r[12]);
+      const t = String(r[13] || '');
+      const b = String(r[11] || '');
+      const s = String(r[14] || '');
+      if (d === date && b === barber && t && !['Cancelled','Completed'].includes(s)) {
+        booked[t] = true;
       }
     });
   }
-
   const times = [];
-  for (
-    let mins = BOOKING_HOUR_START * 60;
-    mins < BOOKING_HOUR_END * 60;
-    mins += SLOT_MINUTES
-  ) {
-    const h = String(Math.floor(mins / 60)).padStart(2, '0');
-    const m = String(mins % 60).padStart(2, '0');
+  for (let mins = BOOKING_HOUR_START * 60; mins < BOOKING_HOUR_END * 60; mins += SLOT_MINUTES) {
+    const h = String(Math.floor(mins / 60)).padStart(2,'0');
+    const m = String(mins % 60).padStart(2,'0');
     const time = h + ':' + m;
-
-    times.push({
-      time,
-      available: !booked[time]
-    });
+    times.push({time:time, available:!booked[time]});
   }
-
-  bookings.sort((a, b) => a.time.localeCompare(b.time));
-
-  return { times, bookings };
+  return {times:times};
 }
 
 function updateBooking(p) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
-  try {
-    if (!p || !p.id) throw new Error('ID booking tidak ditemukan.');
-    if (p.time && !isValidTime_(p.time)) throw new Error('Jam booking tidak valid.');
-    if (p.date && !/^\d{4}-\d{2}-\d{2}$/.test(String(p.date))) {
-      throw new Error('Tanggal booking tidak valid.');
-    }
-    const sh = getSheet_();
+  if (!p || !p.id) throw new Error('ID booking tidak ditemukan.');
+  const sh = getSheet_();
   const values = sh.getDataRange().getValues();
   let targetRow = -1;
   let target = null;
@@ -215,11 +191,8 @@ function updateBooking(p) {
   if (p.date) sh.getRange(targetRow,13).setValue(p.date);
   if (p.time) sh.getRange(targetRow,14).setValue(p.time);
   if (p.status) sh.getRange(targetRow,15).setValue(p.status);
-    if (p.note !== undefined) sh.getRange(targetRow,5).setValue(String(p.note));
-    return {ok:true};
-  } finally {
-    lock.releaseLock();
-  }
+  if (p.note !== undefined) sh.getRange(targetRow,5).setValue(String(p.note));
+  return {ok:true};
 }
 
 function cancelBooking(id, reason) {
@@ -291,16 +264,10 @@ function normalizeWa_(v) {
 }
 
 function normalizeDate_(v) {
-  if (v === null || v === undefined || v === '') return '';
-  if (Object.prototype.toString.call(v) === '[object Date]' && !isNaN(v)) {
-    return Utilities.formatDate(v, TZ, 'yyyy-MM-dd');
-  }
-
-  const s = String(v).trim();
+  if (v instanceof Date) return Utilities.formatDate(v, TZ, 'yyyy-MM-dd');
+  const s = String(v || '').trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-
-  const d = new Date(s);
-  return isNaN(d) ? '' : Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+  return s;
 }
 
 function parsePrice_(v) {
