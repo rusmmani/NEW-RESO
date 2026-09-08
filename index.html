@@ -712,8 +712,26 @@ async function loadTimes(){
   tg.innerHTML='<div style="grid-column:1/-1;padding:18px;text-align:center;font:9px var(--mono);color:var(--muted)">MEMUAT JAM...</div>';
   try{
     const r=await api("getClientBookingData",{date:state.date,barber:state.barber});
-    const times=Array.isArray(r)?r:(Array.isArray(r?.times)?r.times:[]);
+    let times=Array.isArray(r)?r:(Array.isArray(r?.times)?r.times:[]);
     if(!times.length) throw new Error("Server tidak mengembalikan daftar jam.");
+
+    // Untuk tanggal hari ini, jangan tampilkan jam yang sudah lewat.
+    // Booking dimulai dari jam penuh berikutnya agar, misalnya, jam 12:xx
+    // langsung menampilkan slot terdekat mulai pukul 13.00.
+    const todayKey=lk(new Date());
+    if(state.date===todayKey){
+      const nowTime=new Date();
+      const nextHour=nowTime.getMinutes()===0 && nowTime.getSeconds()===0
+        ? nowTime.getHours()+1
+        : nowTime.getHours()+1;
+      times=times.filter(x=>{
+        const m=String(x.time||"").match(/^(\d{1,2})(?::|\.)(\d{2})$/);
+        if(!m) return true;
+        const h=Number(m[1]);
+        return h>=nextHour;
+      });
+    }
+
     rt(times);
   }catch(e){
     console.error("RESO loadTimes:",e);
